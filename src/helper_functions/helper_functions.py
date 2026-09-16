@@ -9,7 +9,6 @@ from PIL import Image
 from torchvision import datasets as datasets
 import torch
 from PIL import ImageDraw
-from pycocotools.coco import COCO
 
 
 def parse_args(parser):
@@ -98,6 +97,8 @@ class AverageMeter(object):
 
 class CocoDetection(datasets.coco.CocoDetection):
     def __init__(self, root, annFile, transform=None, target_transform=None):
+        from pycocotools.coco import COCO
+
         self.root = root
         self.coco = COCO(annFile)
 

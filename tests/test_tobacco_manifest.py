@@ -1,4 +1,5 @@
 import csv
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -150,6 +151,8 @@ def test_dataloader_batches_targets_as_b_by_18_float32(tmp_path):
 
 
 def test_official_tresnet_asl_forward_backward_has_finite_nonzero_gradients(tmp_path):
+    pytest.importorskip("inplace_abn", reason="official TResNet integration requires inplace_abn")
+
     from src.loss_functions.losses import AsymmetricLoss
     from src.models import create_model
 
@@ -198,3 +201,58 @@ def test_official_tresnet_asl_forward_backward_has_finite_nonzero_gradients(tmp_
     assert classifier_grad is not None
     assert torch.isfinite(classifier_grad).all()
     assert torch.count_nonzero(classifier_grad) > 0
+
+
+def test_server_real_manifest_optimizer_step_smoke():
+    manifest_path = os.environ.get("TOBACCO_MANIFEST")
+    data_root = os.environ.get("TOBACCO_DATA_ROOT")
+    if not manifest_path or not data_root:
+        pytest.skip("set TOBACCO_MANIFEST and TOBACCO_DATA_ROOT on the training server")
+    pytest.importorskip("inplace_abn", reason="official TResNet integration requires inplace_abn")
+
+    from src.helper_functions.helper_functions import add_weight_decay
+    from src.loss_functions.losses import AsymmetricLoss
+    from src.models import create_model
+    from train import build_datasets, build_loaders, build_transforms, parse_args
+
+    args = parse_args(
+        [
+            "--dataset",
+            "tobacco",
+            "--manifest",
+            manifest_path,
+            "--data-root",
+            data_root,
+            "--batch-size",
+            "2",
+            "--workers",
+            "0",
+            "--model-path",
+            "",
+        ]
+    )
+    train_transform, val_transform = build_transforms(args)
+    train_dataset, val_dataset = build_datasets(args, train_transform, val_transform)
+    train_loader, _ = build_loaders(args, train_dataset, val_dataset)
+    images, targets = next(iter(train_loader))
+    model = create_model(args).cuda().train()
+    criterion = AsymmetricLoss(
+        gamma_neg=4,
+        gamma_pos=0,
+        clip=0.05,
+        disable_torch_grad_focal_loss=True,
+    )
+    optimizer = torch.optim.Adam(
+        params=add_weight_decay(model, 1e-4),
+        lr=args.lr,
+        weight_decay=0,
+    )
+
+    logits = model(images.cuda()).float()
+    loss = criterion(logits, targets.cuda())
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+
+    assert logits.shape == (images.shape[0], 18)
+    assert torch.isfinite(loss)
