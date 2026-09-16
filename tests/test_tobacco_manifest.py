@@ -37,10 +37,34 @@ def _write_manifest(tmp_path, rows):
     return manifest_path
 
 
-def _write_image(data_root, relative_path, color=(10, 20, 30)):
-    image_path = data_root / relative_path
+def _write_image(data_root, split, relative_path, color=(10, 20, 30)):
+    image_path = data_root / split / relative_path
     image_path.parent.mkdir(parents=True, exist_ok=True)
     Image.new("RGB", (8, 8), color=color).save(image_path)
+
+
+@pytest.mark.parametrize(
+    ("split", "relative_path", "is_healthy"),
+    [
+        ("train", "images/task_01/disease.png", 0),
+        ("train", "images/healthy.png", 1),
+        ("val", "images/task_02/validation.png", 0),
+        ("test", "images/task_03/test.png", 0),
+    ],
+)
+def test_image_path_includes_split_directory(tmp_path, split, relative_path, is_healthy):
+    expected_color = (31, 47, 59)
+    _write_image(tmp_path, split, relative_path, color=expected_color)
+    positives = () if is_healthy else (0,)
+    manifest_path = _write_manifest(
+        tmp_path,
+        [_row(relative_path, split, positives=positives, is_healthy=is_healthy)],
+    )
+
+    dataset = TobaccoManifestDataset(manifest_path, tmp_path, split, transform=None)
+    image, _ = dataset[0]
+
+    assert image.getpixel((0, 0)) == expected_color
 
 
 @pytest.mark.parametrize(
@@ -49,7 +73,7 @@ def _write_image(data_root, relative_path, color=(10, 20, 30)):
 )
 def test_source_boundaries_map_to_expected_model_indices(tmp_path, source_index, model_index):
     relative_path = "images/sample.png"
-    _write_image(tmp_path, relative_path)
+    _write_image(tmp_path, "train", relative_path)
     manifest_path = _write_manifest(
         tmp_path, [_row(relative_path, "train", positives=(source_index,))]
     )
@@ -64,7 +88,7 @@ def test_source_boundaries_map_to_expected_model_indices(tmp_path, source_index,
 
 def test_source_13_is_excluded(tmp_path):
     relative_path = "images/excluded.png"
-    _write_image(tmp_path, relative_path)
+    _write_image(tmp_path, "train", relative_path)
     manifest_path = _write_manifest(
         tmp_path, [_row(relative_path, "train", positives=(13,))]
     )
@@ -77,7 +101,7 @@ def test_source_13_is_excluded(tmp_path):
 
 def test_multi_label_mapping_preserves_all_included_positives(tmp_path):
     relative_path = "images/multi.png"
-    _write_image(tmp_path, relative_path)
+    _write_image(tmp_path, "train", relative_path)
     manifest_path = _write_manifest(
         tmp_path, [_row(relative_path, "train", positives=(0, 12, 13, 14, 18))]
     )
@@ -92,7 +116,7 @@ def test_multi_label_mapping_preserves_all_included_positives(tmp_path):
 
 def test_healthy_sample_has_zero_target_with_float32_shape_18(tmp_path):
     relative_path = "images/healthy.png"
-    _write_image(tmp_path, relative_path)
+    _write_image(tmp_path, "train", relative_path)
     manifest_path = _write_manifest(
         tmp_path, [_row(relative_path, "train", is_healthy=1)]
     )
@@ -119,7 +143,7 @@ def test_split_filtering_is_exact(tmp_path, split):
     rows = []
     for current_split in ("train", "val", "test"):
         relative_path = f"images/{current_split}.png"
-        _write_image(tmp_path, relative_path)
+        _write_image(tmp_path, current_split, relative_path)
         rows.append(_row(relative_path, current_split, positives=(0,)))
     manifest_path = _write_manifest(tmp_path, rows)
 
@@ -133,7 +157,7 @@ def test_dataloader_batches_targets_as_b_by_18_float32(tmp_path):
     rows = []
     for index in range(2):
         relative_path = f"images/sample_{index}.png"
-        _write_image(tmp_path, relative_path)
+        _write_image(tmp_path, "train", relative_path)
         rows.append(_row(relative_path, "train", positives=(index,)))
     manifest_path = _write_manifest(tmp_path, rows)
     dataset = TobaccoManifestDataset(
@@ -159,7 +183,7 @@ def test_official_tresnet_asl_forward_backward_has_finite_nonzero_gradients(tmp_
     rows = []
     for index, positives in enumerate(((0, 14), (12, 18))):
         relative_path = f"images/integration_{index}.png"
-        _write_image(tmp_path, relative_path, color=(40 + index, 80, 120))
+        _write_image(tmp_path, "train", relative_path, color=(40 + index, 80, 120))
         rows.append(_row(relative_path, "train", positives=positives))
     manifest_path = _write_manifest(tmp_path, rows)
     dataset = TobaccoManifestDataset(

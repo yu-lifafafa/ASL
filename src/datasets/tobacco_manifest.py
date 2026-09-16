@@ -96,7 +96,7 @@ class TobaccoManifestDataset(Dataset):
 
     def __getitem__(self, index):
         record = self.records[index]
-        image_path = self.data_root / record.file_name
+        image_path = self.data_root / self.split / record.file_name
         with Image.open(image_path) as image:
             image = image.convert("RGB")
             if self.transform is not None:
