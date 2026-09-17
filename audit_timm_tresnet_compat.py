@@ -1,6 +1,15 @@
 from types import SimpleNamespace
+from pathlib import Path
 
 import timm
+from safetensors.torch import load_file
+
+
+DEFAULT_WEIGHTS_PATH = (
+    Path(__file__).resolve().parent
+    / "weights"
+    / "tresnet_m.miil_in21k.safetensors"
+)
 
 
 def compare_state_dicts(source, destination):
@@ -19,11 +28,21 @@ def compare_state_dicts(source, destination):
 
 
 def main():
-    print("building timm tresnet_m.miil_in21k (pretrained=True)")
-    timm_model = timm.create_model("tresnet_m.miil_in21k", pretrained=True)
+    weights_path = DEFAULT_WEIGHTS_PATH
+    if not weights_path.is_file():
+        raise FileNotFoundError(f"timm weights not found: {weights_path}")
+
+    print("building timm tresnet_m.miil_in21k (pretrained=False)")
+    timm_model = timm.create_model(
+        "tresnet_m.miil_in21k",
+        pretrained=False,
+    )
+    checkpoint_state = load_file(str(weights_path), device="cpu")
+    timm_model.load_state_dict(checkpoint_state, strict=True)
+    print(f"strict timm checkpoint load: passed ({weights_path})")
+
     timm_state = timm_model.state_dict()
     print(f"timm key count: {len(timm_state)}")
-    print(f"timm head keys: {[key for key in timm_state if key.startswith('head.')]}")
 
     from src.models import create_model
 
@@ -40,10 +59,15 @@ def main():
     )
 
     print(f"ASL key count: {len(asl_state)}")
-    print(f"exact key+shape matches: {len(exact)}")
-    print(f"missing keys: {missing}")
-    print(f"unexpected keys: {unexpected}")
-    print(f"shape mismatch keys: {shape_mismatches}")
+    print(f"exact same-name+shape matches: {len(exact)}")
+    print(f"ASL missing keys: {missing}")
+    print(f"timm unexpected keys: {unexpected}")
+    print(f"same-name shape mismatch keys: {shape_mismatches}")
+    print("classifier shapes:")
+    print(f"  timm head.fc.weight: {tuple(timm_state['head.fc.weight'].shape)}")
+    print(f"  timm head.fc.bias: {tuple(timm_state['head.fc.bias'].shape)}")
+    print(f"  ASL head.fc.weight: {tuple(asl_state['head.fc.weight'].shape)}")
+    print(f"  ASL head.fc.bias: {tuple(asl_state['head.fc.bias'].shape)}")
 
 
 if __name__ == "__main__":
