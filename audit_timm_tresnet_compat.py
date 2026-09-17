@@ -1,15 +1,30 @@
-from types import SimpleNamespace
+import argparse
 from pathlib import Path
+from types import SimpleNamespace
 
 import timm
 from safetensors.torch import load_file
 
 
-DEFAULT_WEIGHTS_PATH = (
-    Path(__file__).resolve().parent
-    / "weights"
-    / "tresnet_m.miil_in21k.safetensors"
+DEFAULT_TIMM_WEIGHT = Path("weights") / "tresnet_m.miil_in21k.safetensors"
+HEAD_KEYS = (
+    "head.fc.weight",
+    "head.fc.bias",
 )
+EXPECTED_BACKBONE_TENSORS = 432
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Audit timm and ASL TResNet-M state_dict compatibility",
+    )
+    parser.add_argument(
+        "--timm-weight",
+        type=Path,
+        default=DEFAULT_TIMM_WEIGHT,
+        help=f"timm safetensors path (default: {DEFAULT_TIMM_WEIGHT})",
+    )
+    return parser.parse_args()
 
 
 def compare_state_dicts(source, destination):
@@ -27,8 +42,56 @@ def compare_state_dicts(source, destination):
     return exact_matches, missing, unexpected, shape_mismatches
 
 
+def ordered_backbone_audit(timm_state, asl_state):
+    timm_backbone = [
+        (key, tensor) for key, tensor in timm_state.items() if key not in HEAD_KEYS
+    ]
+    asl_backbone = [
+        (key, tensor) for key, tensor in asl_state.items() if key not in HEAD_KEYS
+    ]
+    ordered_pairs = list(zip(timm_backbone, asl_backbone))
+    shape_mismatches = [
+        (
+            index,
+            timm_key,
+            tuple(timm_tensor.shape),
+            asl_key,
+            tuple(asl_tensor.shape),
+        )
+        for index, ((timm_key, timm_tensor), (asl_key, asl_tensor)) in enumerate(
+            ordered_pairs,
+            start=1,
+        )
+        if tuple(timm_tensor.shape) != tuple(asl_tensor.shape)
+    ]
+    count_matches = (
+        len(timm_backbone)
+        == len(asl_backbone)
+        == EXPECTED_BACKBONE_TENSORS
+    )
+    mapping_established = count_matches and not shape_mismatches
+
+    print(f"timm ordered backbone tensor count: {len(timm_backbone)}")
+    print(f"ASL ordered backbone tensor count: {len(asl_backbone)}")
+    print("first 30 ordered backbone pairs:")
+    for index, ((timm_key, timm_tensor), (asl_key, asl_tensor)) in enumerate(
+        ordered_pairs[:30],
+        start=1,
+    ):
+        print(
+            f"  {index:03d}: {timm_key} {tuple(timm_tensor.shape)}"
+            f" -> {asl_key} {tuple(asl_tensor.shape)}"
+        )
+    print(f"ordered backbone shape mismatches: {shape_mismatches}")
+    print(f"ordered backbone mapping established: {mapping_established}")
+    return mapping_established
+
+
 def main():
-    weights_path = DEFAULT_WEIGHTS_PATH
+    args = parse_args()
+    weights_path = args.timm_weight
+    if not weights_path.is_absolute():
+        weights_path = Path(__file__).resolve().parent / weights_path
     if not weights_path.is_file():
         raise FileNotFoundError(f"timm weights not found: {weights_path}")
 
@@ -68,6 +131,9 @@ def main():
     print(f"  timm head.fc.bias: {tuple(timm_state['head.fc.bias'].shape)}")
     print(f"  ASL head.fc.weight: {tuple(asl_state['head.fc.weight'].shape)}")
     print(f"  ASL head.fc.bias: {tuple(asl_state['head.fc.bias'].shape)}")
+
+    if not ordered_backbone_audit(timm_state, asl_state):
+        raise SystemExit("ordered backbone mapping was not established")
 
 
 if __name__ == "__main__":
